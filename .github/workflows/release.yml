@@ -1,5 +1,3 @@
-# Builds the Windows installer on GitHub's computers and attaches it to the release you publish.
-# Friends download the installer from the release page, and the app updates itself from there.
 name: Build installer
 
 on:
@@ -13,6 +11,9 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: TrackerBean
     steps:
       - uses: actions/checkout@v4
 
@@ -20,7 +21,7 @@ jobs:
         with:
           node-version: 20
 
-      - name: Use the release tag (for example v1.9.1) as the app version
+      - name: Use the release tag as the app version
         if: github.event_name == 'release'
         shell: bash
         run: |
