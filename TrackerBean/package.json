@@ -1,0 +1,40 @@
+{
+  "name": "trackerbean",
+  "version": "1.13.0",
+  "description": "Personal game session tracker",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.trackerbean.app",
+    "productName": "TrackerBean",
+    "files": [
+      "main.js",
+      "src/**",
+      "renderer/**",
+      "assets/**"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**"
+    ]
+  },
+  "dependencies": {
+    "ffmpeg-static": "^5.2.0",
+    "electron-updater": "^6.3.9"
+  }
+}
