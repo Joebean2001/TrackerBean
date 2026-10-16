@@ -1,0 +1,8 @@
+name = "trackerbean-registry"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+# After running `npx wrangler kv namespace create USERS`, paste the id it prints here:
+[[kv_namespaces]]
+binding = "USERS"
+id = "PASTE_KV_ID_HERE"

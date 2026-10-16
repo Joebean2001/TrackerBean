@@ -19,12 +19,20 @@ const ID = /^\d{17}$/;
 const IMG_OK = /^https:\/\/[a-z0-9.-]*steamstatic\.com\//i;
 const RETURN_TO = 'http://localhost/trackerbean-steam';
 
-const defaults = () => ({ name: '', accounts: [], friends: [], cache: {} });
+// "Friend also has TrackerBean": a tiny free lookup service (see registry-worker/).
+// Leave this empty to switch the feature off. After you deploy the worker, paste its URL here,
+// e.g. 'https://trackerbean-registry.yourname.workers.dev'
+const REGISTRY_URL = '';
+const REG_ANNOUNCE_EVERY = 12 * 60 * 60 * 1000;
+const REG_CHECK_EVERY = 30 * 60 * 1000;
+
+const defaults = () => ({ name: '', accounts: [], friends: [], cache: {}, main: '', share: true, combine: false });
+const mainOf = (p) => ((p.accounts || []).some((a) => a.steamId === p.main) ? p.main : ((p.accounts || [])[0] || {}).steamId || '');
 
 // What the window is allowed to see: no API key, no cache.
 function publicProfile(store, safeStorage) {
   const p = store.data.profile || defaults();
-  return { name: p.name || '', accounts: p.accounts || [], friends: p.friends || [], hasKey: !!(p.keyEnc || p.keyPlain) };
+  return { name: p.name || '', accounts: p.accounts || [], friends: p.friends || [], hasKey: !!(p.keyEnc || p.keyPlain), main: mainOf(p), share: p.share !== false, combine: !!p.combine, registry: !!REGISTRY_URL };
 }
 
 // Steam remembers every account that has signed in on this PC (config/loginusers.vdf).
@@ -146,16 +154,67 @@ function register({ ipcMain, store, safeStorage, BrowserWindow, getWin, pushChan
     return err;
   }
 
+  // ---- "Does this friend also use TrackerBean?" ----
+  const reg = { announced: '', announcedAt: 0, found: new Set(), checkedKey: '', checkedAt: 0, ok: false };
+  async function regCall(route, ids) {
+    const res = await net.fetch(REGISTRY_URL.replace(/\/$/, '') + route, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'TrackerBean' },
+      body: JSON.stringify({ ids }), signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) throw new Error('registry ' + res.status);
+    return res.json();
+  }
+  async function syncRegistry(force) {
+    if (!REGISTRY_URL) return;
+    const p = P(), now = Date.now();
+    try {
+      const mine = p.accounts.map((a) => a.steamId).sort();
+      const mineKey = mine.join(',');
+      if (p.share !== false && mine.length && (force || mineKey !== reg.announced || now - reg.announcedAt > REG_ANNOUNCE_EVERY)) {
+        for (let i = 0; i < mine.length; i += 5) await regCall('/register', mine.slice(i, i + 5));
+        reg.announced = mineKey; reg.announcedAt = now;
+      }
+      const friends = p.friends.map((f) => f.steamId).sort();
+      const fKey = friends.join(',');
+      if (friends.length && (force || fKey !== reg.checkedKey || now - reg.checkedAt > REG_CHECK_EVERY)) {
+        const found = new Set();
+        for (let i = 0; i < friends.length; i += 40) {
+          const r = await regCall('/check', friends.slice(i, i + 40));
+          for (const id of (r && r.have) || []) if (ID.test(id)) found.add(id);
+        }
+        reg.found = found; reg.checkedKey = fKey; reg.checkedAt = now; reg.ok = true;
+      }
+    } catch { /* the lookup service being down must never break Friends */ }
+  }
+  const unregister = (ids) => { if (REGISTRY_URL && ids.length) regCall('/unregister', ids).then(() => { reg.announced = ''; }).catch(() => {}); };
+
   const entry = (id) => {
     const c = P().cache[id];
-    return c ? { ...c } : { steamId: id, name: id, avatar: '', url: `https://steamcommunity.com/profiles/${id}`, status: 0, playing: '', pending: true, top: [], total: 0, twoWeeks: 0, count: 0 };
+    return c ? { ...c, hasApp: reg.found.has(id) } : { steamId: id, name: id, avatar: '', url: `https://steamcommunity.com/profiles/${id}`, status: 0, playing: '', pending: true, top: [], total: 0, twoWeeks: 0, count: 0 };
   };
 
   ipcMain.handle('social:data', async (_e, force) => {
     const p = P();
     const ids = [...new Set([...p.accounts.map((a) => a.steamId), ...p.friends.map((f) => f.steamId)])];
-    const error = await lookup(ids, !!force);
-    return { accounts: p.accounts.map((a) => entry(a.steamId)), friends: p.friends.map((f) => entry(f.steamId)), error, hasKey: !!getKey() };
+    const [error] = await Promise.all([lookup(ids, !!force), syncRegistry(!!force)]);
+    return { accounts: p.accounts.map((a) => entry(a.steamId)), friends: p.friends.map((f) => entry(f.steamId)), error, hasKey: !!getKey(), main: mainOf(p), registry: !!REGISTRY_URL && reg.ok };
+  });
+
+  ipcMain.handle('social:set-main', (_e, id) => {
+    const p = P();
+    if (!p.accounts.some((a) => a.steamId === id)) return false;
+    p.main = id; store.save(); pushChange();
+    return true;
+  });
+
+  ipcMain.handle('social:set-opts', (_e, opts) => {
+    const p = P(), o = opts || {};
+    if (typeof o.combine === 'boolean') p.combine = o.combine;
+    if (typeof o.share === 'boolean') {
+      p.share = o.share;
+      if (o.share) syncRegistry(true); else unregister(p.accounts.map((a) => a.steamId));
+    }
+    store.save(); pushChange();
   });
 
   ipcMain.handle('social:local', async () => {
@@ -188,6 +247,7 @@ function register({ ipcMain, store, safeStorage, BrowserWindow, getWin, pushChan
     if (list.some((x) => x.steamId === id)) return 'Already in your list.';
     if (kind === 'friend' && list.length >= MAX_FRIENDS) return `You can have up to ${MAX_FRIENDS} friends here.`;
     list.push({ steamId: id, added: Date.now() });
+    if (kind === 'account' && !p.main) p.main = id;
     return null;
   };
 
@@ -206,7 +266,7 @@ function register({ ipcMain, store, safeStorage, BrowserWindow, getWin, pushChan
 
   ipcMain.handle('social:remove', (_e, kind, id) => {
     const p = P();
-    if (kind === 'account') p.accounts = p.accounts.filter((a) => a.steamId !== id);
+    if (kind === 'account') { p.accounts = p.accounts.filter((a) => a.steamId !== id); p.main = mainOf(p); unregister([id]); }
     else if (kind === 'friend') p.friends = p.friends.filter((f) => f.steamId !== id);
     store.save(); pushChange();
   });

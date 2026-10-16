@@ -74,3 +74,10 @@ GameHub is now **TrackerBean**. On first launch it copies your old data (games, 
 - **Friends**: add friends by Steam profile link or ID, or import your Steam friends list. A leaderboard ranks everyone (including you) by the last 2 weeks or all time, and a click shows their most played games. Friends don't need TrackerBean.
 - **Scrollbars** are hidden everywhere (scrolling still works).
 - **migrate-gamehub-to-trackerbean.bat** copies GameHub's games and sessions into TrackerBean. Quit both apps first. Safe to run more than once, and TrackerBean's data file is backed up before anything changes.
+
+## v1.14: App icon, main/alt accounts, friend badges
+
+- **Icon**: the bean is now the app icon, tray icon and sidebar logo.
+- **Today** has a Steam profile bar at the top: your **main** account big, your alt(s) smaller. Click an alt to swap, or use **Make main** in Profile.
+- The main account is the one ranked as "You" on Friends. In Profile you can switch on **Count all my accounts together** to add them up instead.
+- **TrackerBean badge** next to friends who also use the app. Needs the one-time lookup service in `REGISTRY-SETUP.md`; until then it stays hidden.

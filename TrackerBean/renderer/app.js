@@ -1,5 +1,5 @@
 const $ = (s) => document.querySelector(s);
-let state = { update: {}, games: [], sessions: [], settings: {}, journal: [], goals: [], bingo: null, quest: {}, profile: { name: '', accounts: [], friends: [], hasKey: false } };
+let state = { update: {}, games: [], sessions: [], settings: {}, journal: [], goals: [], bingo: null, quest: {}, profile: { name: '', accounts: [], friends: [], hasKey: false, main: '', share: true, combine: false, registry: false } };
 let view = 'today';
 let found = null; // scan results (null = not scanned)
 let drives = [];
@@ -97,6 +97,7 @@ function renderToday() {
   }).join('') || '<div class="muted" style="padding:12px 0">No sessions yet. Play a game for a minute or more and it shows up here.</div>';
 
   return `<div class="h"><h1>Today</h1><span class="sub">${new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</span></div>
+    ${accountBar()}
     ${hero}
     <div class="stats">
       <div class="card"><div class="lbl">Today</div><div class="big">${fmt(st.today)}</div></div>
@@ -816,6 +817,20 @@ function mergedTop(list) {
   return [...m.values()].sort((a, b) => b.mins - a.mins);
 }
 const isPriv = (e) => !!(e.private || e.pending);
+// Linked accounts with the main one first. Works before Steam data has loaded.
+function orderedAccounts() {
+  const p = state.profile, have = (sx.data && sx.data.accounts) || [];
+  const list = p.accounts.map((a) => have.find((x) => x.steamId === a.steamId) || { steamId: a.steamId, name: 'Steam account', pending: true, top: [] });
+  return [...list.filter((e) => e.steamId === p.main), ...list.filter((e) => e.steamId !== p.main)];
+}
+function accountBar() {
+  const p = state.profile;
+  if (!p.accounts.length) return `<div class="card row acctbar"><div class="grow"><div class="lbl">Steam profile</div><div class="muted" style="font-size:15px;margin-top:6px">Link your Steam account to show your profile here.</div></div><button class="btn red" data-act="nav" data-view="profile">Link Steam</button></div>`;
+  const [main, ...alts] = orderedAccounts();
+  const sub = main.pending ? (p.hasKey ? 'Loading...' : 'Add your Steam API key to load your name and photo') : `${statusDot(main)}${statusText(main)}`;
+  const altBtns = alts.map((a) => `<button class="alt" data-act="sx-set-main" data-id="${a.steamId}" title="Switch to ${esc(a.name)}">${avatarOf(a, 'xs')}<span class="altn"><span class="muted">Alt</span><b>${esc(a.name)}</b></span><span class="swap">⇄</span></button>`).join('');
+  return `<div class="card row acctbar">${avatarOf(main)}<div class="grow"><div class="lbl">Playing as <span class="chip">Main</span></div><div class="big" style="font-size:30px">${esc(main.name)}</div><div class="muted" style="font-size:15px">${sub}</div></div>${altBtns ? `<div class="alts">${altBtns}</div>` : ''}</div>`;
+}
 function friendsWidget() {
   const p = state.profile;
   if (!p.accounts.length && !p.friends.length) return `<div class="card row"><div class="grow"><div class="lbl">Friends</div><div class="muted" style="font-size:15px;margin-top:6px">Link your Steam account to see how your playtime compares with your friends.</div></div><button class="btn red" data-act="nav" data-view="profile">Link Steam</button></div>`;
@@ -823,10 +838,11 @@ function friendsWidget() {
   const sp = socialPeople();
   const all = rankPeople([...(sp.hasMe ? [sp.me] : []), ...sp.friends], 'twoWeeks');
   const shown = all.filter((e) => !isPriv(e)).slice(0, 5);
-  const rows = shown.map((e, i) => `<div class="item"><span class="rank${i < 3 ? ' top' : ''}">${i + 1}</span>${avatarOf(e, 'sm')}<div class="grow"><b>${esc(e.name)}${e.me ? ' <span class="chip">You</span>' : ''}</b><div class="muted">${e.me ? 'All linked accounts' : `${statusDot(e)}${statusText(e)}`}</div></div><div class="fnum"><b style="color:#F5A524">${mins(e.twoWeeks)}</b><div class="muted">last 2 weeks</div></div></div>`).join('');
+  const rows = shown.map((e, i) => `<div class="item"><span class="rank${i < 3 ? ' top' : ''}">${i + 1}</span>${avatarOf(e, 'sm')}<div class="grow"><b>${esc(e.name)}${e.me ? ' <span class="chip">You</span>' : appChip(e)}</b><div class="muted">${e.me ? meLabel() : `${statusDot(e)}${statusText(e)}`}</div></div><div class="fnum"><b style="color:#F5A524">${mins(e.twoWeeks)}</b><div class="muted">last 2 weeks</div></div></div>`).join('');
   const body = rows || `<div class="muted" style="padding:12px 0">${sx.loading || !sx.data ? 'Loading...' : p.friends.length ? 'No public playtime to show yet.' : 'No friends added yet.'}</div>`;
   return `<div class="card"><div class="row"><div class="grow"><div class="lbl">Friends · last 2 weeks</div></div>${p.friends.length ? '' : '<button class="btn ghost" data-act="nav" data-view="friends">Add friends</button>'}<button class="btn ghost" data-act="nav" data-view="friends">See all</button></div>${body}</div>`;
 }
+const appChip = (e) => (e.hasApp ? ' <span class="chip ok" title="Also uses TrackerBean">TrackerBean</span>' : '');
 const statusDot = (e) => `<span class="pdot${e.playing ? ' play' : e.status > 0 ? ' on' : ''}"></span>`;
 const statusText = (e) => (e.playing ? `Playing ${esc(e.playing)}` : e.status > 0 ? 'Online' : 'Offline');
 function sxBanner() {
@@ -840,8 +856,8 @@ function renderProfile() {
   const known = accts.filter((a) => !a.pending && !a.private);
   const steamTotal = known.reduce((t, a) => t + (a.total || 0), 0);
   const owned = known.reduce((t, a) => t + (a.count || 0), 0);
-  const first = accts[0];
-  const shown = p.name || (first && first.name) || 'Your profile';
+  const first = orderedAccounts()[0];
+  const shown = p.name || (first && !first.pending && first.name) || 'Your profile';
   const top = mergedTop(known).slice(0, 8);
   const hero = `<div class="card row hero">${avatarOf(first)}<div class="grow"><div class="lbl">Your profile</div><div class="big" style="font-size:34px">${esc(shown)}</div>
       <div class="muted" style="font-size:15px">${p.accounts.length ? `${p.accounts.length} Steam account${p.accounts.length === 1 ? '' : 's'} linked` : 'No Steam account linked yet'}</div></div></div>`;
@@ -850,9 +866,10 @@ function renderProfile() {
       <div class="card"><div class="lbl">Steam lifetime</div><div class="big" style="color:#F5A524">${known.length ? mins(steamTotal) : '-'}</div></div>
       <div class="card"><div class="lbl">Steam games</div><div class="big" style="color:#2DD4BF">${known.length ? owned : '-'}</div></div></div>`;
   const nameCard = `<div class="card"><div class="lbl">Display name</div><div class="addrow" style="margin-top:10px"><input type="text" id="sx-name" value="${esc(p.name)}" placeholder="${esc((first && first.name) || 'Your name')}" maxlength="30"><button class="btn" data-act="sx-name">Save</button></div></div>`;
-  const rows = p.accounts.map((a) => {
+  const rows = orderedAccounts().map((a0) => {
+    const a = { steamId: a0.steamId };
     const e = accts.find((x) => x.steamId === a.steamId) || { steamId: a.steamId, name: a.steamId, top: [] };
-    return `<div class="item">${avatarOf(e, 'sm')}<div class="grow"><b>${esc(e.name)}</b><div class="muted">${e.pending ? (sx.loading ? 'Loading...' : 'Not loaded yet') : e.private ? 'Game details are private on Steam' : `${mins(e.total)} total · ${mins(e.twoWeeks)} last 2 weeks · ${e.count} games`}</div></div><button class="btn ghost" data-act="sx-remove" data-kind="account" data-id="${a.steamId}">Unlink</button></div>`;
+    return `<div class="item">${avatarOf(e, 'sm')}<div class="grow"><b>${esc(e.name)}</b><div class="muted">${e.pending ? (sx.loading ? 'Loading...' : 'Not loaded yet') : e.private ? 'Game details are private on Steam' : `${mins(e.total)} total · ${mins(e.twoWeeks)} last 2 weeks · ${e.count} games`}</div></div>${a.steamId === p.main ? '<span class="chip">Main</span>' : `<button class="btn" data-act="sx-set-main" data-id="${a.steamId}">Make main</button>`}<button class="btn ghost" data-act="sx-remove" data-kind="account" data-id="${a.steamId}">Unlink</button></div>`;
   }).join('') || '<div class="muted" style="padding:12px 0">No accounts linked. Sign in with Steam, or paste a profile link below. You can link more than one.</div>';
   const accountsCard = `<div class="card"><div class="row"><div class="grow"><div class="lbl">Steam accounts</div></div><button class="btn red" data-act="sx-login">Sign in with Steam</button></div>
       ${rows}
@@ -863,21 +880,28 @@ function renderProfile() {
   const keyCard = `<div class="card"><div class="lbl">Steam API key</div>
       <div class="muted" style="font-size:15px;margin:8px 0 10px">${p.hasKey ? 'Saved on this PC (encrypted when Windows allows it).' : 'A free key lets TrackerBean read playtime from Steam. Get one at steamcommunity.com/dev/apikey (type anything as the domain name) and paste it here.'}</div>
       <div class="addrow"><input type="password" id="sx-key" placeholder="${p.hasKey ? 'Paste a new key to replace it' : '32-character key'}" autocomplete="off" spellcheck="false"><button class="btn red" data-act="sx-key-save">Save key</button>${p.hasKey ? '<button class="btn ghost" data-act="sx-key-clear">Remove</button>' : ''}</div></div>`;
+  const tog = (on, act, label) => `<button class="btn${on ? ' on' : ''}" data-act="${act}">${on ? '✓ ' : ''}${label}</button>`;
+  const optsCard = `<div class="card"><div class="lbl">Accounts &amp; sharing</div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin:10px 0 6px">${p.accounts.length > 1 ? tog(p.combine, 'sx-combine', 'Count all my accounts together on Friends') : ''}${p.registry ? tog(p.share, 'sx-share', 'Let friends see I use TrackerBean') : ''}</div>
+      <div class="muted" style="font-size:15px">${p.accounts.length > 1 ? 'Your <b>main</b> account is the one shown on Today and ranked on Friends. Click an alt on the Today tab to swap. ' : ''}${p.registry ? 'When sharing is on, TrackerBean tells a small lookup service your public Steam ID so friends who also use the app can see a TrackerBean badge next to your name. Nothing else is sent.' : ''}</div></div>`;
   const topCard = top.length ? `<div class="card"><div class="lbl" style="padding-bottom:6px">Most played on Steam</div>${top.map((g) => `<div class="item"><div class="grow"><b>${esc(g.name)}</b></div><b>${mins(g.mins)}</b></div>`).join('')}</div>` : '';
-  return `<div class="h"><h1>Profile</h1><span class="sub">${sx.loading ? 'Loading Steam data...' : ''}</span></div>${sxBanner()}${hero}${stats}${localCard}${accountsCard}${keyCard}${nameCard}${topCard}`;
+  return `<div class="h"><h1>Profile</h1><span class="sub">${sx.loading ? 'Loading Steam data...' : ''}</span></div>${sxBanner()}${hero}${stats}${localCard}${accountsCard}${keyCard}${nameCard}${optsCard}${topCard}`;
 }
 
 function socialPeople() {
   const p = state.profile, d = sx.data;
-  const accts = d ? d.accounts.filter((a) => !a.pending && !a.private) : [];
+  const all = orderedAccounts();
+  const accts = (p.combine ? all : all.slice(0, 1)).filter((a) => !a.pending && !a.private);
+  const lead = all[0];
   const me = {
-    me: true, steamId: 'me', name: p.name || (d && d.accounts[0] && d.accounts[0].name) || 'You',
-    avatar: d && d.accounts[0] && d.accounts[0].avatar, status: 1, playing: '',
+    me: true, steamId: 'me', name: p.name || (lead && !lead.pending && lead.name) || 'You',
+    avatar: lead && lead.avatar, status: 1, playing: '',
     total: accts.reduce((t, a) => t + (a.total || 0), 0), twoWeeks: accts.reduce((t, a) => t + (a.twoWeeks || 0), 0),
     top: mergedTop(accts).slice(0, 12), private: !accts.length, pending: !d,
   };
   return { me, friends: d ? d.friends : [], hasMe: p.accounts.length > 0 };
 }
+const meLabel = () => (state.profile.combine && state.profile.accounts.length > 1 ? 'All linked accounts' : 'Main account');
 const rankPeople = (list, key) => list.sort((a, b) => (isPriv(a) === isPriv(b) ? (b[key] || 0) - (a[key] || 0) : isPriv(a) ? 1 : -1));
 function renderFriends() {
   const p = state.profile, d = sx.data;
@@ -891,12 +915,14 @@ function renderFriends() {
     const body = open && !isPriv(e) ? `<div class="card" style="margin-top:-6px;border-top-left-radius:0;border-top-right-radius:0">${e.top.length ? `<div class="fgames">${e.top.slice(0, 8).map((g) => `<div class="fgame">${steamHeader(g.appid, g.name)}<div><b>${esc(g.name)}</b><div class="muted">${mins(g.mins)} total · ${mins(g.mins2w)} last 2 weeks</div></div></div>`).join('')}</div>` : '<div class="muted">No games with playtime yet.</div>'}${e.me ? '' : `<div style="margin-top:12px;display:flex;gap:10px"><button class="btn ghost" data-act="sx-remove" data-kind="friend" data-id="${e.steamId}">Remove friend</button></div>`}</div>` : '';
     return `<button class="card frow${e.me ? ' me' : ''}" data-act="sx-open" data-id="${e.steamId}"${open && !isPriv(e) ? ' style="border-bottom-left-radius:0;border-bottom-right-radius:0"' : ''}>
       <span class="rank${rank && rank <= 3 ? ' top' : ''}">${rank || '-'}</span>${avatarOf(e, 'sm')}
-      <div class="grow"><b style="font-size:17px">${esc(e.name)}${e.me ? ' <span class="chip">You</span>' : ''}</b><div class="muted">${e.pending && !e.me ? 'Loading...' : `${statusDot(e)}${e.me ? 'All linked accounts' : statusText(e)}`}</div></div>
+      <div class="grow"><b style="font-size:17px">${esc(e.name)}${e.me ? ' <span class="chip">You</span>' : appChip(e)}</b><div class="muted">${e.pending && !e.me ? 'Loading...' : `${statusDot(e)}${e.me ? meLabel() : statusText(e)}`}</div></div>
       ${isPriv(e) ? `<div class="muted">${e.pending ? (sx.loading ? 'Loading...' : 'Not loaded') : e.me ? 'Your Steam game details are private' : 'Game details private'}</div>` : `<div class="fnum"><b style="color:${sx.sort === 'week' ? '#F5A524' : '#F2F2F3'}">${mins(e.twoWeeks)}</b><div class="muted">last 2 weeks</div></div><div class="fnum"><b style="color:${sx.sort === 'all' ? '#F5A524' : '#F2F2F3'}">${mins(e.total)}</b><div class="muted">all time</div></div>`}
     </button>${body}`;
   }).join('');
   const empty = !people.length ? `<div class="card empty"><div class="big">No friends yet</div><div class="muted" style="font-size:15px">Add a friend with their Steam profile link, or import your Steam friends list.${p.accounts.length ? '' : ' Link your own Steam account in Profile first.'}</div></div>` : '';
-  return `<div class="h"><h1>Friends</h1><span class="sub">${sx.loading ? 'Loading Steam data...' : 'Compare playtime'}</span></div>${sxBanner()}
+  const withApp = sp.friends.filter((f) => f.hasApp).length;
+  const appNote = p.registry && sx.data && sx.data.registry ? (withApp ? `${withApp} of your friends ${withApp === 1 ? 'uses' : 'use'} TrackerBean` : 'None of your friends use TrackerBean yet') : 'Compare playtime';
+  return `<div class="h"><h1>Friends</h1><span class="sub">${sx.loading ? 'Loading Steam data...' : appNote}</span></div>${sxBanner()}
     <div class="card"><div class="addrow"><input type="text" data-draft="social.friend" value="${esc(draft.social.friend)}" placeholder="Friend's Steam profile link or ID"><button class="btn red" data-act="sx-add" data-kind="friend">Add friend</button><button class="btn" data-act="sx-import">Import my Steam friends</button></div>
       <div class="muted" style="margin-top:10px">A friend's hours only show if their Steam <b>Game details</b> privacy is Public. They don't need TrackerBean.</div></div>
     <div class="row" style="flex-wrap:wrap"><span class="lbl">Rank by</span>${sortChip('week', 'Last 2 weeks')}${sortChip('all', 'All time')}<div class="grow"></div><button class="btn" data-act="sx-refresh"${sx.loading ? ' disabled' : ''}>Refresh</button></div>
@@ -945,6 +971,9 @@ async function extraActions(act, t) {
     case 'sx-name': { const el = document.getElementById('sx-name'); await a.socialSetName(el ? el.value : ''); flash = 'Name saved.'; render(); return true; }
     case 'sx-add-local': { const r = await a.socialAdd('account', t.dataset.id); flash = r && r.ok ? 'Steam account linked.' : ((r && r.error) || 'Could not link it.'); sx.local = await a.socialLocal(); if (r && r.ok) loadSocial(true); else render(); return true; }
     case 'sx-link-all': { for (const l of sx.local || []) await a.socialAdd('account', l.steamId); sx.local = await a.socialLocal(); flash = 'Steam accounts linked.'; loadSocial(true); return true; }
+    case 'sx-set-main': { await a.socialSetMain(t.dataset.id); flash = null; return true; }
+    case 'sx-combine': await a.socialSetOpts({ combine: !state.profile.combine }); return true;
+    case 'sx-share': await a.socialSetOpts({ share: !state.profile.share }); return true;
     case 'sx-sort': sx.sort = t.dataset.val; render(); return true;
     case 'sx-open': sx.open = sx.open === t.dataset.id ? null : t.dataset.id; render(); return true;
     case 'sx-refresh': loadSocial(true); return true;

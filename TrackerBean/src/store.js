@@ -12,7 +12,7 @@ const DEFAULTS = () => ({
   bingo: null,    // { squares:[{text,done}], createdAt }
   quest: quest.defaults(),
   cs2: { token: '', cfgPort: null }, // CS2 match data: key shared with the game, port written into its config
-  profile: { name: '', accounts: [], friends: [], cache: {} }, // Steam profile + friends (see src/social.js)
+  profile: { name: '', accounts: [], friends: [], cache: {}, main: '', share: true, combine: false }, // Steam profile + friends (see src/social.js)
 });
 
 class Store {

@@ -55,6 +55,8 @@ contextBridge.exposeInMainWorld('api', {
   socialRemove: call('social:remove'),
   socialImportFriends: call('social:import-friends'),
   socialLogin: call('social:login'),
+  socialSetMain: call('social:set-main'),
+  socialSetOpts: call('social:set-opts'),
   updateCheck: call('update:check'),
   updateInstall: call('update:install'),
   onChange: (cb) => ipcRenderer.on('state:changed', () => cb()),

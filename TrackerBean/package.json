@@ -1,6 +1,6 @@
 {
   "name": "trackerbean",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "description": "Personal game session tracker",
   "main": "main.js",
   "scripts": {
