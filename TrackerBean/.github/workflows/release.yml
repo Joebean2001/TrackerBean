@@ -1,0 +1,44 @@
+# Builds the Windows installer on GitHub's computers and attaches it to the release you publish.
+# Friends download the installer from the release page, and the app updates itself from there.
+name: Build installer
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Use the release tag (for example v1.9.1) as the app version
+        if: github.event_name == 'release'
+        shell: bash
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      - name: Install packages
+        run: npm install --no-audit --no-fund
+
+      - name: Build the installer and attach it to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: >
+          npx electron-builder --win --publish always
+          -c.publish.provider=github
+          -c.publish.owner=${{ github.repository_owner }}
+          -c.publish.repo=${{ github.event.repository.name }}
+          -c.publish.releaseType=release
