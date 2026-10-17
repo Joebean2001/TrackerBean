@@ -95,3 +95,7 @@ GameHub is now **TrackerBean**. On first launch it copies your old data (games, 
 
 - Removed **Sign in with Steam**. Steam's servers kept answering it with an "Access Denied" page. Link your account by pasting your Steam profile link or ID on the Profile tab instead. Everything else (hours, friends, shared games, badges) works the same.
 - **Uninstall** (Settings, at the bottom): closes TrackerBean and opens its uninstaller. A box lets you also delete your data (games, sessions, notes); otherwise it's kept in case you reinstall. It also turns off Start with Windows and takes you off friends' "also has TrackerBean" list.
+
+## v1.15.3: Uninstall button fix
+
+- Fixed the **Uninstall** button in Settings, which did nothing because its name clashed with the per-game uninstall button. Both now work.
