@@ -1,7 +1,7 @@
 // Steam profile + friends. Runs in the main process, so the Steam Web API key never reaches the window.
 //
 // How it works (no server needed):
-//  - You sign in with Steam (OpenID) or paste a profile link to link one or more accounts.
+//  - You paste a profile link to link one or more accounts.
 //  - Friends are Steam profiles too. Add them by link / ID, or import your Steam friends list.
 //  - Playtime comes from Steam's Web API, so a friend's hours only show if their Steam
 //    "Game details" privacy is set to Public.
@@ -17,7 +17,6 @@ const TTL = 10 * 60 * 1000;             // how long a lookup is reused before as
 const MAX_FRIENDS = 200;
 const ID = /^\d{17}$/;
 const IMG_OK = /^https:\/\/[a-z0-9.-]*steamstatic\.com\//i;
-const RETURN_TO = 'http://localhost/trackerbean-steam';
 
 // "Friend also has TrackerBean": a tiny free lookup service (see registry-worker/).
 // Leave this empty to switch the feature off. After you deploy the worker, paste its URL here,
@@ -396,48 +395,14 @@ function register({ ipcMain, store, safeStorage, BrowserWindow, getWin, pushChan
     return { ok: true, added, privateCount };
   });
 
-  // "Sign in with Steam": the real Steam login page, so no password ever touches TrackerBean.
-  ipcMain.handle('social:login', () => new Promise((resolveLogin) => {
-    const params = new URLSearchParams({
-      'openid.ns': 'http://specs.openid.net/auth/2.0',
-      'openid.mode': 'checkid_setup',
-      'openid.return_to': RETURN_TO,
-      'openid.realm': 'http://localhost/',
-      'openid.identity': 'http://specs.openid.net/auth/2.0/identifier_select',
-      'openid.claimed_id': 'http://specs.openid.net/auth/2.0/identifier_select',
-    });
-    const w = new BrowserWindow({
-      width: 940, height: 760, parent: getWin() || undefined, modal: !!getWin(), autoHideMenuBar: true, backgroundColor: '#0B0B0D',
-      title: 'Sign in with Steam',
-      webPreferences: { partition: 'steam-login-' + crypto.randomBytes(6).toString('hex'), sandbox: true, contextIsolation: true, nodeIntegration: false },
-    });
-    let done = false;
-    const finish = (r) => { if (done) return; done = true; try { if (!w.isDestroyed()) w.destroy(); } catch { /* already gone */ } resolveLogin(r); };
-
-    const verify = async (url) => {
-      try {
-        const q = new URL(url).searchParams;
-        const m = String(q.get('openid.claimed_id') || '').match(/^https:\/\/steamcommunity\.com\/openid\/id\/(\d{17})$/);
-        if (!m || q.get('openid.mode') !== 'id_res') return finish({ ok: false, cancelled: true });
-        const body = new URLSearchParams();
-        for (const [k, v] of q) if (k.startsWith('openid.')) body.set(k, v);
-        body.set('openid.mode', 'check_authentication');
-        const res = await net.fetch('https://steamcommunity.com/openid/login', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString() });
-        if (!/is_valid\s*:\s*true/.test(await res.text())) return finish({ ok: false, error: "Steam couldn't confirm that sign-in. Try again." });
-        const bad = link('account', m[1]);
-        if (bad) return finish({ ok: false, error: bad });
-        P().friends = P().friends.filter((f) => f.steamId !== m[1]);
-        store.save(); pushChange();
-        finish({ ok: true, steamId: m[1] });
-      } catch { finish({ ok: false, error: "Couldn't finish signing in. Try again." }); }
-    };
-    const intercept = (e, url) => { if (url.startsWith(RETURN_TO)) { e.preventDefault(); verify(url); } };
-    w.webContents.on('will-redirect', intercept);
-    w.webContents.on('will-navigate', intercept);
-    w.webContents.on('did-fail-load', (_e, _c, _d, url) => { if (url && url.startsWith(RETURN_TO)) verify(url); });
-    w.on('closed', () => finish({ ok: false, cancelled: true }));
-    w.loadURL('https://steamcommunity.com/openid/login?' + params.toString()).catch(() => finish({ ok: false, error: "Couldn't open the Steam sign-in page." }));
-  }));
+  // Used by Uninstall: take your accounts off the "friend also has TrackerBean" lookup right away (best effort).
+  return {
+    leaveRegistry: async () => {
+      if (!REGISTRY_URL) return;
+      const ids = P().accounts.map((a) => a.steamId);
+      for (let i = 0; i < ids.length; i += 5) { try { await regCall('/unregister', ids.slice(i, i + 5)); } catch { /* offline: entries expire on their own */ } }
+    },
+  };
 }
 
 module.exports = { register, publicProfile, defaults };

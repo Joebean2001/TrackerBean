@@ -209,7 +209,7 @@ function renderSettings() {
     <div class="card">
       ${sw('startWithWindows', 'Start with Windows', 'Launches quietly in the tray when you sign in, so every session is tracked.')}
       ${sw('closeToTray', 'Keep running in the tray when closed', 'Closing the window keeps tracking. Use Quit in the tray menu to stop it.')}
-      ${sw('popupBlock', 'Pop-up blocker', 'Stops web pages and sign-in windows from opening extra windows or sending you elsewhere. Turn off to let links open in your normal browser.')}
+      ${sw('popupBlock', 'Pop-up blocker', 'Stops web pages from opening extra windows or sending you elsewhere. Turn off to let links open in your normal browser.')}
       ${sw('quietWhileGaming', 'Quiet while gaming', 'Holds TrackerBean notifications (matches saved, challenge unlocks) until your game closes. Where-you-left-off reminders still show.')}
     </div>
     <div class="card"><div class="row"><div class="grow"><div class="lbl">Extra folders to scan</div>
@@ -219,6 +219,9 @@ function renderSettings() {
     <div class="card"><div class="row"><div class="grow"><div class="lbl">Updates</div>
       <div style="margin-top:6px;font-size:15px">TrackerBean ${esc((state.update && state.update.current) || '')} · ${updateText()}</div></div>
       ${state.update && state.update.status === 'ready' ? '<button class="btn red" data-act="update-install">Restart and update</button>' : `<button class="btn" data-act="update-check"${!state.update || ['disabled', 'checking', 'downloading'].includes(state.update.status) ? ' disabled' : ''}>Check for updates</button>`}</div></div>
+    <div class="card"><div class="row"><div class="grow"><div class="lbl">Uninstall TrackerBean</div>
+      <div class="muted" style="font-size:14px;margin-top:6px">Closes the app and opens its uninstaller. You can choose to keep or delete your data, and you're taken off your friends' "also has TrackerBean" list.</div></div>
+      <button class="btn ghost" data-act="uninstall-app" style="color:#ff6b6b;border-color:#ff6b6b">Uninstall...</button></div></div>
     <div class="card"><div class="lbl">About tracking</div>
       <p class="muted" style="font-size:15px;margin:10px 0 0">Sessions shorter than one minute are ignored. All data stays on this PC.</p></div>`;
 }
@@ -915,11 +918,11 @@ function renderProfile() {
     const a = { steamId: a0.steamId };
     const e = accts.find((x) => x.steamId === a.steamId) || { steamId: a.steamId, name: a.steamId, top: [] };
     return `<div class="item">${avatarOf(e, 'sm')}<div class="grow"><b>${esc(e.name)}</b><div class="muted">${e.pending ? (sx.loading ? 'Loading...' : 'Not loaded yet') : e.private ? 'Game details are private on Steam' : `${mins(e.total)} total · ${mins(e.twoWeeks)} last 2 weeks · ${e.count} games`}</div></div>${a.steamId === p.main ? '<span class="chip">Main</span>' : `<button class="btn" data-act="sx-set-main" data-id="${a.steamId}">Make main</button>`}<button class="btn ghost" data-act="sx-remove" data-kind="account" data-id="${a.steamId}">Unlink</button></div>`;
-  }).join('') || '<div class="muted" style="padding:12px 0">No accounts linked. Sign in with Steam, or paste a profile link below. You can link more than one.</div>';
-  const accountsCard = `<div class="card"><div class="row"><div class="grow"><div class="lbl">Steam accounts</div></div><button class="btn red" data-act="sx-login">Sign in with Steam</button></div>
+  }).join('') || '<div class="muted" style="padding:12px 0">No accounts linked. Paste your Steam profile link below. You can link more than one.</div>';
+  const accountsCard = `<div class="card"><div class="lbl">Steam accounts</div>
       ${rows}
-      <div class="addrow" style="margin-top:8px"><input type="text" data-draft="social.account" value="${esc(draft.social.account)}" placeholder="Or paste a steamcommunity.com profile link / ID"><button class="btn" data-act="sx-add" data-kind="account">Link account</button></div>
-      <div class="muted" style="margin-top:10px">Sign in happens on Steam's own page. TrackerBean never sees your password. For your hours to show, set <b>Game details</b> to Public in Steam's privacy settings.</div></div>`;
+      <div class="addrow" style="margin-top:8px"><input type="text" data-draft="social.account" value="${esc(draft.social.account)}" placeholder="Paste your steamcommunity.com profile link / ID"><button class="btn" data-act="sx-add" data-kind="account">Link account</button></div>
+      <div class="muted" style="margin-top:10px">TrackerBean never asks for your Steam password. For your hours to show, set <b>Game details</b> to Public in Steam's privacy settings.</div></div>`;
   const found = (sx.local || []).filter((l) => !p.accounts.some((a) => a.steamId === l.steamId));
   const localCard = found.length ? `<div class="card"><div class="lbl" style="padding-bottom:6px">Found on this PC</div><div class="muted" style="font-size:15px">Accounts that have signed in to the Steam app here. Linking just reads the name, never a password.</div>${found.map((l) => `<div class="item">${avatarOf({ name: l.name }, 'sm')}<div class="grow"><b>${esc(l.name)}${l.recent ? ' <span class="chip">Signed in now</span>' : ''}</b><div class="muted">${esc(l.account)}</div></div><button class="btn red" data-act="sx-add-local" data-id="${l.steamId}">Link</button></div>`).join('')}${found.length > 1 ? '<div style="margin-top:8px"><button class="btn" data-act="sx-link-all">Link all</button></div>' : ''}</div>` : '';
   const keyCard = `<div class="card"><div class="lbl">Steam API key</div>
@@ -979,12 +982,6 @@ async function extraActions(act, t) {
   const a = window.api;
   switch (act) {
     case 'draft-set': setDraft(t.dataset.path, t.dataset.val); render(); return true;
-    case 'sx-login': {
-      const r = await a.socialLogin();
-      if (r && r.ok) { flash = 'Steam account linked.'; sx.data = null; loadSocial(true); }
-      else if (r && r.error) { flash = r.error; render(); }
-      return true;
-    }
     case 'sx-add': {
       const kind = t.dataset.kind, field = kind === 'account' ? 'account' : 'friend';
       const r = await a.socialAdd(kind, draft.social[field]);
@@ -1074,6 +1071,7 @@ async function extraActions(act, t) {
     case 'q-start': { const d = draft.quest; await a.questStart({ gameId: d.gameId, goalMin: Number(d.goalMin), mode: d.mode }); return true; }
     case 'update-check': await a.updateCheck(); return true;
     case 'update-install': await a.updateInstall(); return true;
+    case 'uninstall-app': { const r = await a.uninstallApp(); if (r && !r.ok && r.error) { flash = r.error; render(); } return true; }
     case 'cs2-setup': cs2ui.setup = await a.cs2Setup(); render(); return true;
     case 'cs2-open': cs2ui.sel = t.dataset.id; render(); return true;
     case 'cs2-back': cs2ui.sel = null; render(); return true;
