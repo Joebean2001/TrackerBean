@@ -70,7 +70,7 @@ GameHub is now **TrackerBean**. On first launch it copies your old data (games, 
 
 ## v1.13: Profile, Friends, GameHub import
 
-- **Profile**: sign in with Steam (or paste a profile link) to link one or more Steam accounts. Add your free Steam API key (steamcommunity.com/dev/apikey) so TrackerBean can read playtime. Your Steam *Game details* must be Public for hours to show.
+- **Profile**: paste a profile link to link one or more Steam accounts. Add your free Steam API key (steamcommunity.com/dev/apikey) so TrackerBean can read playtime. Your Steam *Game details* must be Public for hours to show.
 - **Friends**: add friends by Steam profile link or ID, or import your Steam friends list. A leaderboard ranks everyone (including you) by the last 2 weeks or all time, and a click shows their most played games. Friends don't need TrackerBean.
 - **Scrollbars** are hidden everywhere (scrolling still works).
 - **migrate-gamehub-to-trackerbean.bat** copies GameHub's games and sessions into TrackerBean. Quit both apps first. Safe to run more than once, and TrackerBean's data file is backed up before anything changes.
@@ -84,13 +84,14 @@ GameHub is now **TrackerBean**. On first launch it copies your old data (games, 
 
 ## v1.15.0: Pop-up blocker, Steam hours, shared games, backlog helper, bigger profile photo
 
-- **Pop-up blocker** (Settings, on by default): TrackerBean and its Steam sign-in window can no longer open extra windows or get redirected to a website. Web pages can't ask for notifications, location or camera. Switch it off and links open in your normal browser instead.
+- **Pop-up blocker** (Settings, on by default): TrackerBean can no longer open extra windows or get redirected to a website. Web pages can't ask for notifications, location or camera. Switch it off and links open in your normal browser instead.
 - **Quiet while gaming** (Settings, off by default): holds TrackerBean notifications until your game closes. Where-you-left-off reminders still show.
 - **Steam hours import**: games now start with the hours you already had on Steam (e.g. 220h of CS2) instead of 0. It's imported once per game as Steam's total minus what TrackerBean already counted, then only new sessions are added, so nothing is double counted. Goals, streaks and Stats still use TrackerBean's own sessions only. Needs your Steam API key and public Game details. Use **Sync Steam hours** on the Games tab to pull it in right away.
 - **Bigger profile photo** on Today (150px, bigger name).
 - **Games you both own** (Friends): open a friend and click **Games you both own** to see what you share, most-played first, with your hours next to theirs. Needs their Game details to be Public.
 - **Backlog helper** (Challenge): lists Steam games you own but have never played. Installed ones can start a challenge with one click (or a random pick), **Challenge only unplayed games** leaves everything you've already played out, and uninstalled ones have an Install button (opens Steam).
 
-## v1.15.1: Sign-in fix
+## v1.15.2: Sign-in button removed, Uninstall
 
-- **Sign in with Steam** window now identifies as a normal browser, which avoids Steam's "Access Denied" block page.
+- Removed **Sign in with Steam**. Steam's servers kept answering it with an "Access Denied" page. Link your account by pasting your Steam profile link or ID on the Profile tab instead. Everything else (hours, friends, shared games, badges) works the same.
+- **Uninstall** (Settings, at the bottom): closes TrackerBean and opens its uninstaller. A box lets you also delete your data (games, sessions, notes); otherwise it's kept in case you reinstall. It also turns off Start with Windows and takes you off friends' "also has TrackerBean" list.

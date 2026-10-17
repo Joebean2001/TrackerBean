@@ -2,6 +2,7 @@ const { app, BrowserWindow, Tray, Menu, ipcMain, dialog, nativeImage, protocol, 
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 const Store = require('./src/store');
 const { Tracker } = require('./src/tracker');
@@ -35,7 +36,7 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'cover', privileges: PRIV }, { s
 if (!app.requestSingleInstanceLock()) app.quit();
 
 // ---- Pop-up blocker ----
-// Nothing inside TrackerBean (the app window, the Steam sign-in window) may open extra windows on its own,
+// Nothing inside TrackerBean (the app window) may open extra windows on its own,
 // and the app window can never be navigated away to a website. With the blocker switched off in Settings,
 // links still open in your normal browser instead of a new in-app window.
 app.on('web-contents-created', (_e, contents) => {
@@ -331,7 +332,33 @@ app.whenReady().then(() => {
   ipcMain.handle('cs2:delete', (_e, id) => { cs2.remove(String(id)); });
 
   // ---- Steam profile + friends ----
-  social.register({ ipcMain, store, safeStorage, BrowserWindow, getWin: () => win, pushChange });
+  const socialApi = social.register({ ipcMain, store, safeStorage, BrowserWindow, getWin: () => win, pushChange });
+
+  // ---- Uninstall (Settings) ----
+  // Runs the installer's own uninstaller. Your data is kept unless you tick the box.
+  ipcMain.handle('app:uninstall', async () => {
+    if (!app.isPackaged) return { ok: false, error: 'This copy is running from its folder, not installed. To remove it, just delete the folder.' };
+    const exe = path.join(path.dirname(process.execPath), 'Uninstall TrackerBean.exe');
+    if (!fs.existsSync(exe)) return { ok: false, error: "Couldn't find the uninstaller. Use Windows Settings > Apps > TrackerBean > Uninstall instead." };
+    const r = await dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, {
+      type: 'warning', title: 'Uninstall TrackerBean', buttons: ['Uninstall', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+      message: 'Uninstall TrackerBean?',
+      detail: 'TrackerBean will close and its uninstaller will open. Your games, sessions and notes are kept on this PC unless you tick the box below.',
+      checkboxLabel: 'Also delete my TrackerBean data (games, sessions, notes, settings)', checkboxChecked: false,
+    });
+    if (r.response !== 0) return { ok: false, cancelled: true };
+    try { await Promise.race([socialApi.leaveRegistry(), new Promise((res) => setTimeout(res, 5000))]); } catch { /* best effort */ }
+    try { app.setLoginItemSettings({ openAtLogin: false }); } catch { /* ignore */ }
+    if (r.checkboxChecked) {
+      const dataDir = app.getPath('userData');
+      if (/trackerbean/i.test(path.basename(dataDir))) { // safety: only ever delete TrackerBean's own folder
+        try { spawn('cmd.exe', ['/c', `ping -n 8 127.0.0.1 >nul & rmdir /s /q "${dataDir}"`], { detached: true, stdio: 'ignore', windowsHide: true }).unref(); } catch { /* ignore */ }
+      }
+    }
+    try { spawn(exe, [], { detached: true, stdio: 'ignore' }).unref(); } catch { return { ok: false, error: "Couldn't start the uninstaller. Use Windows Settings > Apps > TrackerBean > Uninstall instead." }; }
+    setTimeout(() => { quitting = true; app.quit(); }, 800);
+    return { ok: true };
+  });
 
 
   // ---- games ----
