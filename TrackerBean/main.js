@@ -34,6 +34,19 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'cover', privileges: PRIV }, { s
 
 if (!app.requestSingleInstanceLock()) app.quit();
 
+// ---- Pop-up blocker ----
+// Nothing inside TrackerBean (the app window, the Steam sign-in window) may open extra windows on its own,
+// and the app window can never be navigated away to a website. With the blocker switched off in Settings,
+// links still open in your normal browser instead of a new in-app window.
+app.on('web-contents-created', (_e, contents) => {
+  contents.setWindowOpenHandler(({ url }) => {
+    const blocked = !store || store.data.settings.popupBlock !== false;
+    if (!blocked && /^https:\/\//i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  contents.on('will-attach-webview', (e) => e.preventDefault());
+});
+
 let win, tray, store, tracker, coverDir, journalDir, thumbDir, clipMetaFile;
 let clipMeta = {};
 let cs2 = null, cs2CfgDir = null, updater = null;
@@ -55,8 +68,25 @@ const BINGO_POOL = [
   'Stop playing on a high note',
 ];
 
-function notify(title, body) {
+function showNotification(title, body) {
   try { if (Notification.isSupported()) new Notification({ title, body, icon: path.join(__dirname, 'assets', 'icon.png') }).show(); } catch { /* ignore */ }
+}
+// "Quiet while gaming": hold pop-ups while a game is running and show them once it closes.
+// (Where-you-left-off reminders are the point of launching a game, so they are never held.)
+const heldNotes = [];
+const gameRunning = () => !!(store && store.data.sessions.some((s) => s.open));
+function notify(title, body, always) {
+  if (!always && store && store.data.settings.quietWhileGaming && gameRunning()) {
+    if (heldNotes.length < 20) heldNotes.push([title, body]);
+    return;
+  }
+  showNotification(title, body);
+}
+function flushHeldNotes() {
+  if (gameRunning() || !heldNotes.length) return;
+  const list = heldNotes.splice(0);
+  if (list.length === 1) return showNotification(list[0][0], list[0][1]);
+  showNotification(`${list.length} notifications while you played`, list.map((n) => n[0]).join(' · ').slice(0, 200));
 }
 const fmtMin = (m) => (m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ' ' + (m % 60) + 'm' : ''}` : `${m}m`);
 
@@ -82,11 +112,11 @@ function notifyResume() {
     seenOpen.add(s.id);
     const note = store.data.journal.filter((j) => j.left && j.gameId === s.gameId).sort((a, b) => b.createdAt - a.createdAt)[0];
     const game = store.data.games.find((g) => g.id === s.gameId);
-    if (note && game && note.text) notify(`Where you left off in ${game.name}`, note.text.slice(0, 200));
+    if (note && game && note.text) notify(`Where you left off in ${game.name}`, note.text.slice(0, 200), true);
   }
 }
 
-function onTrackerChange() { pushChange(); runQuestCheck(); notifyResume(); }
+function onTrackerChange() { pushChange(); runQuestCheck(); notifyResume(); flushHeldNotes(); }
 
 function createWindow() {
   win = new BrowserWindow({
@@ -95,6 +125,7 @@ function createWindow() {
     icon: path.join(__dirname, 'assets', 'icon.png'),
     webPreferences: { preload: path.join(__dirname, 'src', 'preload.js'), contextIsolation: true, nodeIntegration: false },
   });
+  win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('file:')) e.preventDefault(); });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.on('close', (e) => {
     if (!quitting && store.data.settings.closeToTray) { e.preventDefault(); win.hide(); }
@@ -208,6 +239,11 @@ app.whenReady().then(() => {
     }
   } catch { /* fresh start is fine */ }
   store = new Store(path.join(app.getPath('userData'), 'trackerbean.json'));
+  // Web pages can't ask for notifications, location, camera etc. (TrackerBean's own notifications are separate).
+  try {
+    const DENY = new Set(['notifications', 'geolocation', 'media', 'midi', 'midiSysex', 'openExternal', 'pointerLock', 'idle-detection', 'hid', 'serial', 'usb', 'bluetooth']);
+    require('electron').session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(!DENY.has(permission)));
+  } catch { /* older Electron: skip */ }
   try { if (store.data.settings.startWithWindows) app.setLoginItemSettings({ openAtLogin: true, args: ['--hidden'] }); } catch { /* not allowed here */ }
   coverDir = path.join(app.getPath('userData'), 'covers');
   journalDir = path.join(app.getPath('userData'), 'journal');
@@ -423,6 +459,8 @@ app.whenReady().then(() => {
   ipcMain.handle('settings:set', (_e, patch) => {
     const s = store.data.settings;
     if (typeof patch.closeToTray === 'boolean') s.closeToTray = patch.closeToTray;
+    if (typeof patch.popupBlock === 'boolean') s.popupBlock = patch.popupBlock;
+    if (typeof patch.quietWhileGaming === 'boolean') { s.quietWhileGaming = patch.quietWhileGaming; if (!patch.quietWhileGaming) heldNotes.length = 0; }
     if (typeof patch.startWithWindows === 'boolean') {
       s.startWithWindows = patch.startWithWindows;
       app.setLoginItemSettings({ openAtLogin: patch.startWithWindows, args: ['--hidden'] });
@@ -903,6 +941,14 @@ app.whenReady().then(() => {
     if (!store.data.games.some((g) => g.id === id) || (q.current && q.current.gameId === id)) return;
     q.excluded = (q.excluded || []).filter((x) => x !== id);
     if (excluded) q.excluded.push(id);
+    if (q.pending && !quest.candidates(store.data).length) { q.pending = false; q.finished = true; }
+    store.save(); pushChange();
+  });
+
+  // Keep only these games in the challenge (everything else is left out). The current target always stays in.
+  ipcMain.handle('quest:only', (_e, ids) => {
+    const q = store.data.quest, keep = new Set((Array.isArray(ids) ? ids : []).map(String));
+    q.excluded = store.data.games.filter((g) => !keep.has(g.id) && !(q.current && q.current.gameId === g.id)).map((g) => g.id);
     if (q.pending && !quest.candidates(store.data).length) { q.pending = false; q.finished = true; }
     store.save(); pushChange();
   });

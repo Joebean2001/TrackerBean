@@ -81,3 +81,12 @@ GameHub is now **TrackerBean**. On first launch it copies your old data (games, 
 - **Today** has a Steam profile bar at the top: your **main** account big, your alt(s) smaller. Click an alt to swap, or use **Make main** in Profile.
 - The main account is the one ranked as "You" on Friends. In Profile you can switch on **Count all my accounts together** to add them up instead.
 - **TrackerBean badge** next to friends who also use the app. Needs the one-time lookup service in `REGISTRY-SETUP.md`; until then it stays hidden.
+
+## v1.15.0: Pop-up blocker, Steam hours, shared games, backlog helper, bigger profile photo
+
+- **Pop-up blocker** (Settings, on by default): TrackerBean and its Steam sign-in window can no longer open extra windows or get redirected to a website. Web pages can't ask for notifications, location or camera. Switch it off and links open in your normal browser instead.
+- **Quiet while gaming** (Settings, off by default): holds TrackerBean notifications until your game closes. Where-you-left-off reminders still show.
+- **Steam hours import**: games now start with the hours you already had on Steam (e.g. 220h of CS2) instead of 0. It's imported once per game as Steam's total minus what TrackerBean already counted, then only new sessions are added, so nothing is double counted. Goals, streaks and Stats still use TrackerBean's own sessions only. Needs your Steam API key and public Game details. Use **Sync Steam hours** on the Games tab to pull it in right away.
+- **Bigger profile photo** on Today (150px, bigger name).
+- **Games you both own** (Friends): open a friend and click **Games you both own** to see what you share, most-played first, with your hours next to theirs. Needs their Game details to be Public.
+- **Backlog helper** (Challenge): lists Steam games you own but have never played. Installed ones can start a challenge with one click (or a random pick), **Challenge only unplayed games** leaves everything you've already played out, and uninstalled ones have an Install button (opens Steam).
