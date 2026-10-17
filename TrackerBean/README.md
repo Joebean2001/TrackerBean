@@ -90,3 +90,7 @@ GameHub is now **TrackerBean**. On first launch it copies your old data (games, 
 - **Bigger profile photo** on Today (150px, bigger name).
 - **Games you both own** (Friends): open a friend and click **Games you both own** to see what you share, most-played first, with your hours next to theirs. Needs their Game details to be Public.
 - **Backlog helper** (Challenge): lists Steam games you own but have never played. Installed ones can start a challenge with one click (or a random pick), **Challenge only unplayed games** leaves everything you've already played out, and uninstalled ones have an Install button (opens Steam).
+
+## v1.15.1: Sign-in fix
+
+- **Sign in with Steam** window now identifies as a normal browser, which avoids Steam's "Access Denied" block page.
