@@ -176,7 +176,10 @@ select:focus,input:focus,textarea:focus{border-color:#E5383B;outline:none}
 .addrow{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .addrow input[type=text],.addrow input[type=password]{flex:1;min-width:220px}
 
-.acctbar{gap:18px;align-items:center}
+.acctbar{gap:26px;align-items:center;padding:22px 26px}
+.acctbar > .avatar{width:150px;height:150px;border-radius:24px;box-shadow:0 6px 24px rgba(0,0,0,.45)}
+.acctbar > .avatar.ph{font-size:56px}
+.acctbar .big{font-size:40px !important;line-height:1.05}
 .alts{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .alt{display:flex;align-items:center;gap:9px;background:#1A1A1F;border:1px solid #2A2A31;border-radius:10px;padding:6px 12px 6px 7px;color:#F2F2F3;font:inherit;cursor:pointer;transition:border-color .15s,background .15s}
 .alt:hover{border-color:#E5383B;background:#201418}

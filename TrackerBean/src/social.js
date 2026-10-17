@@ -5,7 +5,7 @@
 //  - Friends are Steam profiles too. Add them by link / ID, or import your Steam friends list.
 //  - Playtime comes from Steam's Web API, so a friend's hours only show if their Steam
 //    "Game details" privacy is set to Public.
-const { net } = require('electron');
+const { net, shell } = require('electron');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -22,7 +22,7 @@ const RETURN_TO = 'http://localhost/trackerbean-steam';
 // "Friend also has TrackerBean": a tiny free lookup service (see registry-worker/).
 // Leave this empty to switch the feature off. After you deploy the worker, paste its URL here,
 // e.g. 'https://trackerbean-registry.yourname.workers.dev'
-const REGISTRY_URL = '';
+const REGISTRY_URL = 'https://trackerbean-registry.distant-corncob74.workers.dev';
 const REG_ANNOUNCE_EVERY = 12 * 60 * 60 * 1000;
 const REG_CHECK_EVERY = 30 * 60 * 1000;
 
@@ -106,7 +106,8 @@ function register({ ipcMain, store, safeStorage, BrowserWindow, getWin, pushChan
   // Look up a batch of people and refresh the cache.
   async function lookup(ids, force) {
     const p = P(), key = getKey(), now = Date.now();
-    const need = ids.filter((id) => force || !p.cache[id] || now - p.cache[id].at > TTL);
+    const own = new Set(p.accounts.map((a) => a.steamId));
+    const need = ids.filter((id) => force || !p.cache[id] || now - p.cache[id].at > TTL || (own.has(id) && !p.cache[id].playtimes && !p.cache[id].private));
     if (!need.length) return null;
     if (!key) return 'Add your Steam API key in Profile to load playtime.';
     let err = null;
@@ -144,6 +145,10 @@ function register({ ipcMain, store, safeStorage, BrowserWindow, getWin, pushChan
           const seen = new Set(top.map((g) => g.appid));
           for (const g of [...games].filter((g) => g.playtime_2weeks).sort((a, b) => b.playtime_2weeks - a.playtime_2weeks).slice(0, 5)) if (!seen.has(g.appid)) top.push(slim(g));
           c.top = top;
+          if (own.has(id)) { // every game's hours, for your own accounts only (used once per game to import your Steam hours)
+            c.playtimes = {}; c.names = {};
+            for (const g of games) { c.playtimes[g.appid] = g.playtime_forever || 0; if (g.name) c.names[String(g.name).toLowerCase()] = g.appid; }
+          }
         } catch (e) {
           if (e.message === 'private') Object.assign(c, { private: true, total: 0, twoWeeks: 0, count: 0, top: [] });
           else { err = err || e.message; } // keep whatever we had cached
@@ -152,6 +157,103 @@ function register({ ipcMain, store, safeStorage, BrowserWindow, getWin, pushChan
     } catch (e) { err = e.message; }
     store.save();
     return err;
+  }
+
+  // ---- Full game libraries, fetched on demand (never saved: friends' libraries would bloat the data file) ----
+  const ownedCache = new Map(); // steamId -> { at, games:[{appid,name,mins}] }
+  async function owned(id) {
+    const c = ownedCache.get(id);
+    if (c && Date.now() - c.at < TTL) return c.games;
+    const key = getKey();
+    if (!key) throw new Error('Add your Steam API key in Profile first.');
+    const r = await steam(`/IPlayerService/GetOwnedGames/v1/?key=${encodeURIComponent(key)}&steamid=${id}&include_appinfo=1&include_played_free_games=1&format=json`);
+    const games = (r.response && r.response.games) || [];
+    if (!games.length && !(r.response && r.response.game_count)) throw new Error('private');
+    const slim = games.map((g) => ({ appid: g.appid, name: String(g.name || g.appid).slice(0, 80), mins: g.playtime_forever || 0 }));
+    ownedCache.set(id, { at: Date.now(), games: slim });
+    return slim;
+  }
+  // My library: the main account, or every linked account when "count all my accounts together" is on.
+  async function myLibrary() {
+    const p = P();
+    const ids = p.combine ? p.accounts.map((a) => a.steamId) : [mainOf(p)].filter(Boolean);
+    if (!ids.length) throw new Error('Link a Steam account first.');
+    const m = new Map();
+    let any = false;
+    for (const id of ids) {
+      try {
+        for (const g of await owned(id)) { any = true; const x = m.get(g.appid); if (x) x.mins += g.mins; else m.set(g.appid, { ...g }); }
+      } catch (e) { if (e.message !== 'private') throw e; }
+    }
+    if (!any) throw new Error('Your Steam game details are private. In Steam: Profile > Edit Profile > Privacy Settings > Game details > Public.');
+    return m;
+  }
+
+  // Games you and a friend both own, most-played (combined) first.
+  ipcMain.handle('social:shared', async (_e, friendId) => {
+    const p = P();
+    if (!p.friends.some((f) => f.steamId === friendId)) return { ok: false, error: 'That person is not in your friends list.' };
+    try {
+      const mine = await myLibrary();
+      let theirs;
+      try { theirs = await owned(friendId); }
+      catch (e) { if (e.message === 'private') return { ok: false, error: "This friend's Steam game details are private, so their library can't be compared." }; throw e; }
+      const list = theirs.filter((g) => mine.has(g.appid))
+        .map((g) => ({ appid: g.appid, name: g.name, mine: mine.get(g.appid).mins, theirs: g.mins }))
+        .sort((a, b) => (b.mine + b.theirs) - (a.mine + a.theirs));
+      return { ok: true, total: list.length, mineCount: mine.size, theirCount: theirs.length, list: list.slice(0, 60) };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  // Games you own on Steam but have never played (0 minutes), marked with the matching tracked game if it's installed.
+  ipcMain.handle('social:backlog', async (_e, force) => {
+    try {
+      if (force) ownedCache.clear();
+      const lib = await myLibrary();
+      const d = store.data;
+      const list = [];
+      for (const g of lib.values()) {
+        if (g.mins > 0) continue;
+        const inst = d.games.find((x) => (x.steamAppId && String(x.steamAppId) === String(g.appid)) || String(x.name).toLowerCase() === g.name.toLowerCase());
+        if (inst && (inst.baseMin > 0 || d.sessions.some((s) => s.gameId === inst.id))) continue; // already played (Steam can lag behind)
+        list.push({ appid: g.appid, name: g.name, gameId: inst ? inst.id : null });
+      }
+      list.sort((a, b) => (!!b.gameId - !!a.gameId) || a.name.localeCompare(b.name));
+      return { ok: true, owned: lib.size, total: list.length, list: list.slice(0, 400) };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('social:install', (_e, appid) => {
+    if (!/^\d{1,10}$/.test(String(appid))) return false;
+    shell.openExternal(`steam://install/${appid}`);
+    return true;
+  });
+
+  // One-time import of the hours you played on Steam BEFORE TrackerBean was watching.
+  // baseMin = Steam's total minus what TrackerBean already counted, so nothing is counted twice.
+  // It is saved once per game; from then on only TrackerBean's own sessions are added on top.
+  function syncBaselines() {
+    const p = P(), d = store.data;
+    const ids = p.combine ? p.accounts.map((a) => a.steamId) : [mainOf(p)];
+    const caches = ids.map((id) => p.cache[id]).filter((c) => c && c.playtimes);
+    if (!caches.length) return false;
+    let changed = false;
+    for (const g of d.games) {
+      if (g.baseAt) continue;
+      if (d.sessions.some((s) => s.open && s.gameId === g.id)) continue; // wait until the game is closed so Steam has the session too
+      const key = String(g.name || '').toLowerCase();
+      let found = false, steamMin = 0;
+      for (const c of caches) {
+        const appid = g.steamAppId && c.playtimes[g.steamAppId] != null ? g.steamAppId : c.names && c.names[key];
+        if (appid != null && c.playtimes[appid] != null) { found = true; steamMin += c.playtimes[appid]; }
+      }
+      if (!found) continue;
+      const trackedMin = Math.round(d.sessions.filter((s) => s.gameId === g.id && !s.open).reduce((t, s) => t + Math.max(0, (s.end || s.lastSeen) - s.start), 0) / 60000);
+      g.baseMin = Math.max(0, steamMin - trackedMin);
+      g.baseAt = Date.now();
+      changed = true;
+    }
+    return changed;
   }
 
   // ---- "Does this friend also use TrackerBean?" ----
@@ -197,6 +299,7 @@ function register({ ipcMain, store, safeStorage, BrowserWindow, getWin, pushChan
     const p = P();
     const ids = [...new Set([...p.accounts.map((a) => a.steamId), ...p.friends.map((f) => f.steamId)])];
     const [error] = await Promise.all([lookup(ids, !!force), syncRegistry(!!force)]);
+    if (syncBaselines()) { store.save(); pushChange(); }
     return { accounts: p.accounts.map((a) => entry(a.steamId)), friends: p.friends.map((f) => entry(f.steamId)), error, hasKey: !!getKey(), main: mainOf(p), registry: !!REGISTRY_URL && reg.ok };
   });
 

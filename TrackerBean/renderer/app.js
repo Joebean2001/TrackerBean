@@ -124,21 +124,22 @@ function renderGames() {
   if (notice) banner = `<div class="card banner"><div class="row"><div class="grow"><b class="t">${esc(notice)}</b></div><button class="btn" data-act="dismiss-notice">Dismiss</button></div></div>` + banner;
   const rows = state.games.map((g) => {
     const ss = state.sessions.filter((s) => s.gameId === g.id);
-    const ms = ss.reduce((t, s) => t + (endOf(s) - s.start), 0);
+    const base = (g.baseMin || 0) * 60000; // hours played on Steam before TrackerBean, imported once
+    const ms = base + ss.reduce((t, s) => t + (endOf(s) - s.start), 0);
     const last = ss.reduce((m, s) => Math.max(m, s.start), 0);
-    return { g, ss, ms, last };
+    return { g, ss, ms, last, base };
   }).sort((a, b) => b.ms - a.ms);
   const top = Math.max(...rows.map((r) => r.ms), 1);
-  const cards = rows.map(({ g, ss, ms, last }) => {
+  const cards = rows.map(({ g, ss, ms, last, base }) => {
     const [bg] = colorFor(g.name);
     return `<div class="card row" style="gap:16px">${gameCover(g, 128, 60)}
       <div class="grow"><b style="font-size:17px">${esc(g.name)}</b>
       <div class="muted">${last ? 'Last played ' + dayLabel(last) : 'Not played yet'} · ${ss.length} session${ss.length === 1 ? '' : 's'}</div>
       <div class="track"><div style="width:${(ms / top) * 100}%;background:${bg}"></div></div></div>
-      <div style="text-align:right"><div class="big" style="font-size:30px">${fmt(ms)}</div><div class="acts"><button class="btn" data-act="cover-open" data-id="${g.id}">Change image</button><button class="btn${g.finishedAt ? ' on' : ''}" data-act="finish" data-id="${g.id}" title="Counts toward your Goals">${g.finishedAt ? '✓ Finished' : 'Mark finished'}</button><button class="btn ghost" data-act="remove" data-id="${g.id}">Remove</button></div></div></div>`;
+      <div style="text-align:right"><div class="big" style="font-size:30px">${fmt(ms)}</div>${base ? `<div class="muted" style="font-size:13px" title="Imported from Steam once, then only new playtime is added">incl. ${fmt(base)} from Steam</div>` : ''}<div class="acts"><button class="btn" data-act="cover-open" data-id="${g.id}">Change image</button><button class="btn${g.finishedAt ? ' on' : ''}" data-act="finish" data-id="${g.id}" title="Counts toward your Goals">${g.finishedAt ? '✓ Finished' : 'Mark finished'}</button><button class="btn ghost" data-act="remove" data-id="${g.id}">Remove</button></div></div></div>`;
   }).join('');
   const empty = `<div class="card empty"><div class="big">No games yet</div><div class="muted" style="font-size:15px">Scan your PC for installed games, or add one by picking its .exe file.</div></div>`;
-  return `<div class="h"><h1>Games</h1><div class="row"><button class="btn" data-act="scan"${scanning ? ' disabled' : ''}>${scanning ? 'Scanning...' : 'Scan for games'}</button><button class="btn" data-act="pick">Add .exe</button><button class="btn red" data-act="pick-folder">+ Add game folder</button></div></div>
+  return `<div class="h"><h1>Games</h1><div class="row"><button class="btn" data-act="scan"${scanning ? ' disabled' : ''}>${scanning ? 'Scanning...' : 'Scan for games'}</button><button class="btn" data-act="sx-refresh" title="Import your Steam hours for games that don't have them yet"${sx.loading ? ' disabled' : ''}>${sx.loading ? 'Syncing...' : 'Sync Steam hours'}</button><button class="btn" data-act="pick">Add .exe</button><button class="btn red" data-act="pick-folder">+ Add game folder</button></div></div>
     ${banner}${rows.length ? `<div class="games">${cards}</div>` : empty}${renderCoverModal()}`;
 }
 
@@ -208,6 +209,8 @@ function renderSettings() {
     <div class="card">
       ${sw('startWithWindows', 'Start with Windows', 'Launches quietly in the tray when you sign in, so every session is tracked.')}
       ${sw('closeToTray', 'Keep running in the tray when closed', 'Closing the window keeps tracking. Use Quit in the tray menu to stop it.')}
+      ${sw('popupBlock', 'Pop-up blocker', 'Stops web pages and sign-in windows from opening extra windows or sending you elsewhere. Turn off to let links open in your normal browser.')}
+      ${sw('quietWhileGaming', 'Quiet while gaming', 'Holds TrackerBean notifications (matches saved, challenge unlocks) until your game closes. Where-you-left-off reminders still show.')}
     </div>
     <div class="card"><div class="row"><div class="grow"><div class="lbl">Extra folders to scan</div>
       <div class="muted" style="font-size:14px;margin-top:6px">TrackerBean already checks Steam, Epic, GOG and Xbox folders on every drive. Add a folder here if your games live somewhere else (each game in its own sub-folder).</div></div>
@@ -460,7 +463,8 @@ function renderGoals() {
 }
 
 /* ---------- challenge (unlock chain) ---------- */
-function renderQuest() {
+function renderQuest() { return renderQuestMain() + backlogCard(); }
+function renderQuestMain() {
   const q = state.quest || {}, d = draft.quest;
   const ex = new Set(q.excluded || []);
   const included = state.games.filter((g) => !ex.has(g.id));
@@ -842,6 +846,47 @@ function friendsWidget() {
   const body = rows || `<div class="muted" style="padding:12px 0">${sx.loading || !sx.data ? 'Loading...' : p.friends.length ? 'No public playtime to show yet.' : 'No friends added yet.'}</div>`;
   return `<div class="card"><div class="row"><div class="grow"><div class="lbl">Friends · last 2 weeks</div></div>${p.friends.length ? '' : '<button class="btn ghost" data-act="nav" data-view="friends">Add friends</button>'}<button class="btn ghost" data-act="nav" data-view="friends">See all</button></div>${body}</div>`;
 }
+/* ---------- games you both own (Friends) + backlog helper (Challenge) ---------- */
+const sh = { id: null, loading: false, res: null, all: false };
+const bl = { loading: false, loaded: false, data: null };
+function sharedHtml(e) {
+  const btn = (label) => `<button class="btn" data-act="sx-shared" data-id="${e.steamId}">${label}</button>`;
+  if (sh.id !== e.steamId) return `<div style="margin-top:14px">${btn('Games you both own')}</div>`;
+  if (sh.loading) return '<div class="muted" style="margin-top:14px">Comparing your libraries...</div>';
+  const r = sh.res;
+  if (!r || !r.ok) return `<div class="muted" style="margin-top:14px">${esc((r && r.error) || 'Could not compare libraries.')}</div><div style="margin-top:8px">${btn('Try again')}</div>`;
+  if (!r.total) return `<div class="muted" style="margin-top:14px">You don't own any of the same games (you have ${r.mineCount}, they have ${r.theirCount}).</div>`;
+  const shown = sh.all ? r.list : r.list.slice(0, 12);
+  const cards = shown.map((g) => `<div class="fgame">${steamHeader(g.appid, g.name)}<div><b>${esc(g.name)}</b><div class="muted"><span style="color:#F5A524">You ${mins(g.mine)}</span> · ${esc(e.name)} ${mins(g.theirs)}</div></div></div>`).join('');
+  return `<div style="margin-top:14px"><div class="lbl">Games you both own</div><div class="muted" style="font-size:14px;margin:4px 0 8px">${r.total} in common, most played first. You own ${r.mineCount}, ${esc(e.name)} owns ${r.theirCount}.</div><div class="fgames">${cards}</div>${r.list.length > 12 ? `<div style="margin-top:10px"><button class="btn ghost" data-act="sx-shared-more">${sh.all ? 'Show fewer' : `Show all ${r.list.length}${r.total > r.list.length ? '+' : ''}`}</button></div>` : ''}</div>`;
+}
+async function loadBacklog(force) {
+  if (bl.loading) return;
+  bl.loading = true; softRender();
+  try { bl.data = await window.api.socialBacklog(!!force); } catch { bl.data = { ok: false, error: "Couldn't load your Steam library." }; }
+  bl.loading = false; bl.loaded = true; softRender();
+}
+function maybeLoadBacklog() {
+  const p = state.profile;
+  if (!bl.loaded && !bl.loading && p.accounts.length && p.hasKey) loadBacklog(false);
+}
+function backlogCard() {
+  const p = state.profile, q = state.quest || {}, d = draft.quest;
+  const title = '<div class="lbl">Backlog helper</div>';
+  if (!p.accounts.length || !p.hasKey) return `<div class="card row"><div class="grow">${title}<div class="muted" style="font-size:15px;margin-top:6px">Link Steam and add your API key to find games you own but have never played.</div></div><button class="btn amber" data-act="nav" data-view="profile">Open Profile</button></div>`;
+  if (bl.loading && !bl.data) return `<div class="card">${title}<div class="muted" style="margin-top:8px">Checking your Steam library...</div></div>`;
+  const r = bl.data;
+  if (!r || !r.ok) return `<div class="card">${title}<div class="muted" style="font-size:15px;margin:8px 0">${esc((r && r.error) || 'Not loaded yet.')}</div><button class="btn" data-act="bl-load">Try again</button></div>`;
+  const idle = !q.current && !q.pending && !q.finished;
+  const inst = r.list.filter((g) => g.gameId && gameById(g.gameId)), rest = r.list.filter((g) => !inst.includes(g));
+  const head = `<div class="row" style="flex-wrap:wrap"><div class="grow">${title}<div class="muted" style="font-size:15px;margin-top:6px">${r.total} of your ${r.owned} Steam games have never been played${inst.length ? ` · ${inst.length} installed and ready for a challenge` : ''}.</div></div>
+    <button class="btn" data-act="bl-load"${bl.loading ? ' disabled' : ''}>${bl.loading ? 'Refreshing...' : 'Refresh'}</button></div>`;
+  const actions = inst.length ? `<div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px">${idle && inst.length ? `<button class="btn red" data-act="bl-random">Start with a random backlog game</button>` : ''}<button class="btn" data-act="bl-only" title="Leaves every game you've already played out of the challenge">Challenge only unplayed games</button><button class="btn ghost" data-act="bl-all">Include all games again</button></div>` : '';
+  const tiles = inst.length ? `<div class="fgames" style="margin-top:14px">${inst.slice(0, 12).map((g) => `<div class="fgame">${steamHeader(g.appid, g.name)}<div><b>${esc(g.name)}</b><div class="muted">Installed · never played</div></div>${idle ? `<button class="btn" data-act="bl-start" data-id="${g.gameId}">Start challenge with this</button>` : ''}</div>`).join('')}</div>${inst.length > 12 ? `<div class="muted" style="margin-top:8px">+ ${inst.length - 12} more installed</div>` : ''}` : '';
+  const list = rest.length ? `<div class="lbl" style="margin-top:16px">Not installed</div><div class="muted" style="font-size:14px;margin:4px 0 6px">Install one and rescan on the Games tab to add it to the challenge.</div>${rest.slice(0, 15).map((g) => `<div class="item"><div class="grow"><b>${esc(g.name)}</b></div><button class="btn ghost" data-act="sx-install" data-appid="${g.appid}">Install</button></div>`).join('')}${rest.length > 15 ? `<div class="muted" style="margin-top:8px">+ ${rest.length - 15} more</div>` : ''}` : '';
+  if (!r.total) return `<div class="card">${head}<div class="muted" style="margin-top:10px">Nothing left in your backlog. You've played everything you own.</div></div>`;
+  return `<div class="card">${head}${actions}${tiles}${list}</div>`;
+}
 const appChip = (e) => (e.hasApp ? ' <span class="chip ok" title="Also uses TrackerBean">TrackerBean</span>' : '');
 const statusDot = (e) => `<span class="pdot${e.playing ? ' play' : e.status > 0 ? ' on' : ''}"></span>`;
 const statusText = (e) => (e.playing ? `Playing ${esc(e.playing)}` : e.status > 0 ? 'Online' : 'Offline');
@@ -912,7 +957,7 @@ function renderFriends() {
   const list = people.map((e, i) => {
     const open = sx.open === e.steamId;
     const rank = isPriv(e) ? '' : i + 1;
-    const body = open && !isPriv(e) ? `<div class="card" style="margin-top:-6px;border-top-left-radius:0;border-top-right-radius:0">${e.top.length ? `<div class="fgames">${e.top.slice(0, 8).map((g) => `<div class="fgame">${steamHeader(g.appid, g.name)}<div><b>${esc(g.name)}</b><div class="muted">${mins(g.mins)} total · ${mins(g.mins2w)} last 2 weeks</div></div></div>`).join('')}</div>` : '<div class="muted">No games with playtime yet.</div>'}${e.me ? '' : `<div style="margin-top:12px;display:flex;gap:10px"><button class="btn ghost" data-act="sx-remove" data-kind="friend" data-id="${e.steamId}">Remove friend</button></div>`}</div>` : '';
+    const body = open && !isPriv(e) ? `<div class="card" style="margin-top:-6px;border-top-left-radius:0;border-top-right-radius:0">${e.top.length ? `<div class="fgames">${e.top.slice(0, 8).map((g) => `<div class="fgame">${steamHeader(g.appid, g.name)}<div><b>${esc(g.name)}</b><div class="muted">${mins(g.mins)} total · ${mins(g.mins2w)} last 2 weeks</div></div></div>`).join('')}</div>` : '<div class="muted">No games with playtime yet.</div>'}${e.me ? '' : `${sharedHtml(e)}<div style="margin-top:12px;display:flex;gap:10px"><button class="btn ghost" data-act="sx-remove" data-kind="friend" data-id="${e.steamId}">Remove friend</button></div>`}</div>` : '';
     return `<button class="card frow${e.me ? ' me' : ''}" data-act="sx-open" data-id="${e.steamId}"${open && !isPriv(e) ? ' style="border-bottom-left-radius:0;border-bottom-right-radius:0"' : ''}>
       <span class="rank${rank && rank <= 3 ? ' top' : ''}">${rank || '-'}</span>${avatarOf(e, 'sm')}
       <div class="grow"><b style="font-size:17px">${esc(e.name)}${e.me ? ' <span class="chip">You</span>' : appChip(e)}</b><div class="muted">${e.pending && !e.me ? 'Loading...' : `${statusDot(e)}${e.me ? meLabel() : statusText(e)}`}</div></div>
@@ -975,6 +1020,19 @@ async function extraActions(act, t) {
     case 'sx-combine': await a.socialSetOpts({ combine: !state.profile.combine }); return true;
     case 'sx-share': await a.socialSetOpts({ share: !state.profile.share }); return true;
     case 'sx-sort': sx.sort = t.dataset.val; render(); return true;
+    case 'sx-shared': { const id = t.dataset.id; sh.id = id; sh.loading = true; sh.res = null; sh.all = false; render(); const r = await a.socialShared(id); if (sh.id === id) { sh.res = r; sh.loading = false; render(); } return true; }
+    case 'sx-shared-more': sh.all = !sh.all; render(); return true;
+    case 'sx-install': await a.socialInstall(t.dataset.appid); return true;
+    case 'bl-load': loadBacklog(true); return true;
+    case 'bl-start': { const d = draft.quest; await a.questStart({ gameId: t.dataset.id, goalMin: Number(d.goalMin), mode: d.mode }); return true; }
+    case 'bl-random': {
+      const pool = ((bl.data && bl.data.list) || []).filter((g) => g.gameId && gameById(g.gameId));
+      if (!pool.length) return true;
+      const d = draft.quest, g = pool[Math.floor(Math.random() * pool.length)];
+      await a.questStart({ gameId: g.gameId, goalMin: Number(d.goalMin), mode: d.mode }); return true;
+    }
+    case 'bl-only': { const ids = ((bl.data && bl.data.list) || []).map((g) => g.gameId).filter(Boolean); if (ids.length) await a.questOnly(ids); return true; }
+    case 'bl-all': await a.questOnly(state.games.map((g) => g.id)); return true;
     case 'sx-open': sx.open = sx.open === t.dataset.id ? null : t.dataset.id; render(); return true;
     case 'sx-refresh': loadSocial(true); return true;
     case 'dismiss-flash': flash = null; render(); return true;
@@ -1109,6 +1167,7 @@ function enterView(v) {
   if (v === 'goals' && !state.bingo) window.api.bingoNew();
   if (v === 'montage' && !mont.loaded && !mont.loading) loadMontage();
   if (v === 'cs2') { cs2ui.sel = null; loadCs2(); }
+  if (v === 'quest') maybeLoadBacklog();
   if (v === 'profile') window.api.socialLocal().then((l) => { sx.local = l; softRender(); });
   if (['profile', 'friends', 'today'].includes(v)) maybeLoadSocial();
 }

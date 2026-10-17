@@ -4,9 +4,9 @@ const quest = require('./quest');
 const path = require('path');
 
 const DEFAULTS = () => ({
-  games: [],      // { id, name, exes:[...], installPath, added }
+  games: [],      // { id, name, exes:[...], installPath, added, baseMin, baseAt } (baseMin = Steam hours before TrackerBean, imported once)
   sessions: [],   // { id, gameId, start, end, lastSeen, open }
-  settings: { closeToTray: true, startWithWindows: false, scanFolders: [], clipsFolder: '', montageDir: '' },
+  settings: { closeToTray: true, startWithWindows: false, scanFolders: [], clipsFolder: '', montageDir: '', popupBlock: true, quietWhileGaming: false },
   journal: [],    // { id, gameId, mood, text, images:[file], left, createdAt }
   goals: [],      // { id, type, title, target, period, gameId, start, end, created, doneAt, done }
   bingo: null,    // { squares:[{text,done}], createdAt }
